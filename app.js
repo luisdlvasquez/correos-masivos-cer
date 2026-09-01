@@ -192,6 +192,7 @@ class MailPulseApp {
     // Template Editors Input Listeners
     document.getElementById('templateSubject').addEventListener('input', () => this.updatePreview());
     document.getElementById('templateBody').addEventListener('input', () => this.updatePreview());
+    document.getElementById('bannerImageInput').addEventListener('change', (e) => this.handleBannerImageUpload(e));
     document.getElementById('previewContactSelect').addEventListener('change', () => this.updatePreview());
 
     // Document Designer Input Listeners
@@ -529,6 +530,42 @@ class MailPulseApp {
     if (targetId === 'docBodyText') this.updateDocPreview();
   }
 
+  handleBannerImageUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      this.showToast('Selecciona un archivo de imagen valido (PNG, JPG, etc.).', 'danger');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      const imgTag = `<img src="${dataUrl}" alt="Banner" style="max-width:100%; display:block; margin-bottom:16px;">`;
+
+      const textarea = document.getElementById('templateBody');
+      const start = textarea.selectionStart || 0;
+      const end = textarea.selectionEnd || 0;
+      textarea.value = textarea.value.substring(0, start) + imgTag + '\n\n' + textarea.value.substring(end);
+
+      const sizeKB = Math.round(file.size / 1024);
+      if (sizeKB > 150) {
+        this.showToast(`Imagen insertada (${sizeKB} KB). Esta un poco pesada: para evitar que el correo se recorte o caiga en spam, considera comprimirla a menos de 150 KB.`, 'warning');
+      } else {
+        this.showToast(`Imagen insertada en el cuerpo del correo (${sizeKB} KB).`, 'success');
+      }
+
+      this.updatePreview();
+      event.target.value = '';
+    };
+    reader.onerror = () => {
+      this.showToast('No se pudo leer la imagen.', 'danger');
+    };
+    reader.readAsDataURL(file);
+  }
+
   /* --------------------------------------------------------------------------
      7. Live Email & DOC/PDF Previews with Dynamic Replacements
      -------------------------------------------------------------------------- */
@@ -585,7 +622,7 @@ class MailPulseApp {
 
     document.getElementById('previewTo').textContent = contact.email;
     document.getElementById('previewSubjectDisplay').textContent = subject;
-    document.getElementById('previewBodyDisplay').textContent = body;
+    document.getElementById('previewBodyDisplay').innerHTML = body.replace(/\n/g, '<br>');
   }
 
   updateDocPreview() {
@@ -885,6 +922,7 @@ class MailPulseApp {
 
     let sentOk = 0;
     let sentFail = 0;
+    let errorDetails = [];
 
     const sends = campaignContacts.map(async (c) => {
       const prevEvents = this.state.events.filter(e => e.contactId === c.id);
@@ -913,18 +951,40 @@ class MailPulseApp {
             contactCompany: c.company
           })
         });
-        const json = await resp.json();
-        if (json.ok) sentOk++; else sentFail++;
+
+        let json = null;
+        let rawText = '';
+        try {
+          rawText = await resp.text();
+          json = rawText ? JSON.parse(rawText) : null;
+        } catch (parseErr) {
+          // response wasn't JSON (e.g. a gateway/error page) - keep rawText as the detail
+        }
+
+        if (resp.ok && json && json.ok) {
+          sentOk++;
+        } else {
+          sentFail++;
+          const detail = (json && (json.error || json.message)) || rawText || `HTTP ${resp.status} ${resp.statusText}`;
+          errorDetails.push(`${c.email}: [${resp.status}] ${String(detail).slice(0, 200)}`);
+        }
       } catch (e) {
         console.error('Error enviando a', c.email, e);
         sentFail++;
+        errorDetails.push(`${c.email}: ${e.message || 'Error de red/conexión (revisa la consola del navegador con F12)'}`);
       }
     });
 
     await Promise.all(sends);
     await this.refreshEventsFromSupabase();
 
-    this.showToast(`Envío real completado: ${sentOk} enviados, ${sentFail} con error/rechazo. Revisa la tabla de actividad para el estado real.`, (sentFail > 0 && sentOk === 0) ? 'danger' : 'success');
+    if (sentFail > 0) {
+      const detailHtml = errorDetails.slice(0, 5).map(d => `&bull; ${d}`).join('<br>');
+      this.showToast(`<strong>Envío real: ${sentOk} enviados, ${sentFail} con error.</strong><br>${detailHtml}`, 'danger');
+      console.error('Detalle de errores del envio masivo:', errorDetails);
+    } else {
+      this.showToast(`Envío real completado: ${sentOk} enviados, ${sentFail} con error/rechazo. Revisa la tabla de actividad para el estado real.`, 'success');
+    }
   }
 
   simulateMultichannelDispatch(channel) {
@@ -1050,9 +1110,13 @@ class MailPulseApp {
   }
 
   showToast(message, type = 'info') {
+    // Los avisos ya NO se cierran solos: se quedan en pantalla hasta que el
+    // usuario le da clic al boton "x" a proposito. Evita perder el detalle
+    // de un error/exito por no leerlo a tiempo.
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
     toast.className = 'toast';
+    toast.style.position = 'relative';
 
     const colors = {
       success: 'var(--opened-color)',
@@ -1064,16 +1128,20 @@ class MailPulseApp {
     toast.style.borderLeftColor = colors[type] || colors.info;
     toast.innerHTML = `
       <i class="fa-solid fa-circle-info" style="color: ${colors[type]};"></i>
-      <span>${message}</span>
+      <span style="padding-right: 1.5rem; display: inline-block;">${message}</span>
+      <button type="button" aria-label="Cerrar aviso" style="position:absolute; top:6px; right:8px; background:none; border:none; color:inherit; opacity:0.6; cursor:pointer; font-size:1rem; line-height:1;">&times;</button>
     `;
 
-    container.appendChild(toast);
-    setTimeout(() => {
+    const dismiss = () => {
       toast.style.opacity = '0';
       toast.style.transform = 'translateX(100%)';
       toast.style.transition = 'all 0.3s ease';
       setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    };
+
+    toast.querySelector('button').addEventListener('click', dismiss);
+    container.appendChild(toast);
+    // Sin auto-cierre: el aviso se queda hasta que se cierre manualmente con la "x".
   }
 }
 

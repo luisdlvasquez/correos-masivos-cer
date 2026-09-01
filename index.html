@@ -367,6 +367,14 @@
               <input type="text" id="templateSubject" class="input-control" value="Notificación Oficial Contrato {{numero_contrato}} para {{empresa}}">
             </div>
 
+            <div class="form-group" style="background: rgba(15,23,42,0.6); padding: 0.85rem; border: 1px dashed var(--border-glow); border-radius: var(--radius-sm);">
+              <label class="form-label"><i class="fa-solid fa-image"></i> Insertar Imagen / Banner en el Correo</label>
+              <input type="file" id="bannerImageInput" accept="image/*" class="input-control btn-sm">
+              <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.3rem;">
+                Selecciona una imagen (PNG/JPG) y se inserta automáticamente en el cuerpo del correo. Recomendado: menos de 150 KB para evitar que el correo se recorte o vaya a spam.
+              </p>
+            </div>
+
             <div class="form-group">
               <label class="form-label">Cuerpo del Mensaje</label>
               <textarea id="templateBody" class="input-control" rows="9">Estimado/a {{nombre}},
