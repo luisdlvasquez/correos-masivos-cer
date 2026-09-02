@@ -921,18 +921,37 @@ class MailPulseApp {
     const campaign = this.state.campaigns.find(cmp => cmp.id === campaignId);
     const bodyTemplate = document.getElementById('templateBody').value || '';
 
+    // Idempotency: never re-send to a contact that already has a successful or
+    // terminal event for this campaign. Makes it safe to re-run dispatch on a
+    // large campaign (e.g. after a partial failure) without double-sending.
+    const alreadyHandled = new Set(
+      this.state.events
+        .filter(e => e.campaignId === campaignId && ['sent', 'delivered', 'opened', 'clicked', 'bounced', 'unsubscribed', 'spam'].includes(e.status))
+        .map(e => e.contactId)
+    );
+    const pending = campaignContacts.filter(c => !alreadyHandled.has(c.id));
+    const skipped = campaignContacts.length - pending.length;
+
+    if (pending.length === 0) {
+      this.showToast('Todos los contactos de esta campaña ya fueron enviados previamente (0 pendientes).', 'warning');
+      return;
+    }
+
     this.closeModals();
-    this.showToast(`Enviando correos reales a ${campaignContacts.length} contactos vía Resend...`, 'info');
+    this.showToast(`Enviando correos reales a ${pending.length} contactos vía Resend` + (skipped > 0 ? ` (${skipped} ya enviados, se omiten)` : '') + `... Esto puede tardar varios minutos para lotes grandes, no cierres la pestaña.`, 'info');
 
     let sentOk = 0;
     let sentFail = 0;
     let errorDetails = [];
 
-    const sends = campaignContacts.map(async (c) => {
-      const prevEvents = this.state.events.filter(e => e.contactId === c.id);
-      const isUnsubOrBounce = prevEvents.some(e => ['bounced', 'unsubscribed', 'spam'].includes(e.status));
-      if (isUnsubOrBounce) return;
+    // Resend's API rate limit is ~10 req/s. Send in small concurrent batches
+    // with a pause between batches to stay safely under that, and retry each
+    // contact once on failure (covers transient 429/network errors).
+    const BATCH_SIZE = 4;
+    const BATCH_DELAY_MS = 900;
+    const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
+    const sendOne = async (c, attempt = 1) => {
       const subject = this.replaceVariablesInText(subjectTemplate, c) + (attachPdf ? ' [PDF Membretado Adjunto]' : '');
       const htmlBody = this.replaceVariablesInText(bodyTemplate, c).replace(/\n/g, '<br>') || `<p>${subject}</p>`;
 
@@ -969,19 +988,41 @@ class MailPulseApp {
 
         if (resp.ok && json && json.ok) {
           sentOk++;
-        } else {
-          sentFail++;
-          const detail = (json && (json.error || json.message)) || rawText || `HTTP ${resp.status} ${resp.statusText}`;
-          errorDetails.push(`${c.email}: [${resp.status}] ${String(detail).slice(0, 200)}`);
+          return;
         }
+
+        // Retry once on rate-limit / server errors before giving up.
+        if (attempt === 1 && (resp.status === 429 || resp.status >= 500)) {
+          await sleep(1500);
+          return sendOne(c, 2);
+        }
+
+        sentFail++;
+        const detail = (json && (json.error || json.message)) || rawText || `HTTP ${resp.status} ${resp.statusText}`;
+        errorDetails.push(`${c.email}: [${resp.status}] ${String(detail).slice(0, 200)}`);
       } catch (e) {
+        if (attempt === 1) {
+          await sleep(1500);
+          return sendOne(c, 2);
+        }
         console.error('Error enviando a', c.email, e);
         sentFail++;
         errorDetails.push(`${c.email}: ${e.message || 'Error de red/conexión (revisa la consola del navegador con F12)'}`);
       }
-    });
+    };
 
-    await Promise.all(sends);
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      const batch = pending.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(c => sendOne(c)));
+
+      const done = Math.min(i + BATCH_SIZE, pending.length);
+      if (done % 100 < BATCH_SIZE || done === pending.length) {
+        this.showToast(`Progreso: ${done}/${pending.length} procesados (${sentOk} ok, ${sentFail} error)...`, 'info');
+      }
+
+      if (i + BATCH_SIZE < pending.length) await sleep(BATCH_DELAY_MS);
+    }
+
     await this.refreshEventsFromSupabase();
 
     if (sentFail > 0) {
