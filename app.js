@@ -901,6 +901,10 @@ class MailPulseApp {
     const campaignId = document.getElementById('dispatchCampaignSelect').value;
     const subjectTemplate = document.getElementById('dispatchSubject').value;
     const attachPdf = document.getElementById('dispatchAttachPdfCheckbox').checked;
+    const fromEmailInput = document.getElementById('dispatchFromEmail');
+    const replyToInput = document.getElementById('dispatchReplyTo');
+    const fromEmail = fromEmailInput ? fromEmailInput.value.trim() : '';
+    const replyTo = replyToInput ? replyToInput.value.trim() : '';
 
     if (!campaignId) {
       this.showToast('Por favor selecciona una campaña.', 'danger');
@@ -948,7 +952,9 @@ class MailPulseApp {
             campaignName: campaign ? campaign.name : null,
             contactId: c.id,
             contactName: c.name,
-            contactCompany: c.company
+            contactCompany: c.company,
+            fromEmail: fromEmail || undefined,
+            replyTo: replyTo || undefined
           })
         });
 

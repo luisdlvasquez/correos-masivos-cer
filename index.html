@@ -707,6 +707,16 @@ DIRECCIÓN DE OPERACIONES Y CONTRATOS</textarea>
         <input type="text" id="dispatchSubject" class="input-control" value="Notificación Oficial para {{empresa}} - Contrato {{numero_contrato}}">
       </div>
       <div class="form-group">
+        <label class="form-label">Correo Remitente (De)</label>
+        <input type="text" id="dispatchFromEmail" class="input-control" placeholder="Ej: CAJAMAG Notifica <Cajamagnotifica@correos.cerexperiencia.com>">
+        <p style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.25rem;">Nombre y correo que verán los destinatarios como remitente. Debe ser un correo de un dominio ya verificado.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Responder a (Reply-To)</label>
+        <input type="email" id="dispatchReplyTo" class="input-control" placeholder="Ej: coordinadora_operativa@cerexperiencia.com">
+        <p style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.25rem;">Cuando alguien responda el correo, la respuesta llegará a esta dirección (aunque el correo haya salido de otro remitente).</p>
+      </div>
+      <div class="form-group">
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: #fff;">
           <input type="checkbox" id="dispatchAttachPdfCheckbox" checked>
           <span>Adjuntar Carta Membretada Personalizada (PDF) a cada correo</span>
