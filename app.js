@@ -834,7 +834,16 @@ class MailPulseApp {
 
       // Column Key Normalizer
       let imported = 0;
+      let skippedDuplicates = 0;
       let detectedVars = [];
+
+      // Dedup guard: emails already present in this campaign (existing contacts
+      // plus anything imported earlier in this same file) never get a second contact.
+      const existingEmailsInCampaign = new Set(
+        this.state.contacts
+          .filter(c => c.campaignId === targetCampaignId)
+          .map(c => (c.email || '').trim().toLowerCase())
+      );
 
       json.forEach(row => {
         const keys = Object.keys(row);
@@ -858,6 +867,12 @@ class MailPulseApp {
         });
 
         if (email) {
+          const normalizedEmail = email.trim().toLowerCase();
+          if (existingEmailsInCampaign.has(normalizedEmail)) {
+            skippedDuplicates++;
+            return;
+          }
+          existingEmailsInCampaign.add(normalizedEmail);
           this.state.contacts.push({
             id: 'ct_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
             campaignId: targetCampaignId,
@@ -888,7 +903,8 @@ class MailPulseApp {
       this.updatePreview();
       this.updateDocPreview();
 
-      this.showToast(`¡Importación exitosa! Se cargaron ${imported} contactos en la campaña y se detectaron ${detectedVars.length} variables dinámicas nuevas.`, 'success');
+      const dupMsg = skippedDuplicates > 0 ? ` Se omitieron ${skippedDuplicates} correos duplicados (ya existían en esta campaña).` : '';
+      this.showToast(`¡Importación exitosa! Se cargaron ${imported} contactos en la campaña y se detectaron ${detectedVars.length} variables dinámicas nuevas.${dupMsg}`, 'success');
     };
 
     reader.readAsArrayBuffer(file);
