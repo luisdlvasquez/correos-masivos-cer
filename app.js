@@ -68,15 +68,30 @@ class MailPulseApp {
      -------------------------------------------------------------------------- */
   async refreshEventsFromSupabase() {
     try {
-      const { data, error } = await supabaseClient
-        .from('mailpulse_events')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1000);
+      // Paginate through the full table instead of a flat .limit(1000) — a
+      // campaign this size generates many more than 1000 event rows (each
+      // contact can have sent/delivered/opened/... rows), and a hard cap here
+      // made the dashboard undercount sends on large campaigns.
+      const PAGE_SIZE = 1000;
+      const HARD_CAP = 50000; // safety valve, not a normal-case limit
+      let allRows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabaseClient
+          .from('mailpulse_events')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
 
-      if (error) throw error;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
 
-      this.state.events = (data || []).map(row => ({
+        allRows = allRows.concat(data);
+        if (data.length < PAGE_SIZE || allRows.length >= HARD_CAP) break;
+        from += PAGE_SIZE;
+      }
+
+      this.state.events = allRows.map(row => ({
         id: row.id,
         campaignId: row.campaign_id,
         contactId: row.contact_id,
