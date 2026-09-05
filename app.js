@@ -203,6 +203,7 @@ class MailPulseApp {
     document.getElementById('btnNewDispatch').addEventListener('click', () => this.openNewDispatchModal());
     document.getElementById('btnImportXLSX').addEventListener('click', () => this.openXLSXModal());
     document.getElementById('btnExportReport').addEventListener('click', () => this.exportMetricsCSV());
+    document.getElementById('btnExportContactsXLSX').addEventListener('click', () => this.exportContactsXLSX());
 
     // Template Editors Input Listeners
     document.getElementById('templateSubject').addEventListener('input', () => this.updatePreview());
@@ -1185,6 +1186,108 @@ class MailPulseApp {
     document.body.removeChild(link);
 
     this.showToast('Reporte CSV descargado correctamente.', 'success');
+  }
+
+  /* --------------------------------------------------------------------------
+     10.5 Exportar Base de Datos de Contactos con Estado Real (.xlsx)
+     -------------------------------------------------------------------------- */
+  exportContactsXLSX() {
+    const isAll = this.selectedCampaignId === 'all';
+    const contacts = isAll
+      ? this.state.contacts
+      : this.state.contacts.filter(c => c.campaignId === this.selectedCampaignId);
+
+    if (contacts.length === 0) {
+      this.showToast('No hay contactos para exportar en la campaña seleccionada.', 'warning');
+      return;
+    }
+
+    // Unión de todas las columnas dinámicas (NIT, Teléfono, Municipio, etc.)
+    // para que la hoja tenga las mismas columnas en todas las filas.
+    const customKeysSet = new Set();
+    contacts.forEach(c => {
+      Object.keys(c.customFields || {}).forEach(k => customKeysSet.add(k));
+    });
+    const customKeys = Array.from(customKeysSet);
+
+    // Prioridad para determinar el "Estado del Envío" de cada contacto a
+    // partir de todos sus eventos registrados (el más informativo primero).
+    const STATUS_LABELS = [
+      { key: 'bounced', label: 'Rebotado' },
+      { key: 'spam', label: 'Marcado como Spam' },
+      { key: 'unsubscribed', label: 'Dado de Baja' },
+      { key: 'rejected', label: 'Rechazado' },
+      { key: 'accepted', label: 'Aceptó / Convirtió' },
+      { key: 'clicked', label: 'Hizo Clic' },
+      { key: 'opened', label: 'Abrió el Correo' },
+      { key: 'delivered', label: 'Entregado' },
+      { key: 'sent', label: 'Enviado (sin confirmación aún)' }
+    ];
+
+    const rows = contacts.map(c => {
+      // state.events viene ordenado del más reciente al más antiguo, así
+      // que el primer match es el evento más reciente de este contacto.
+      const history = this.state.events.filter(e => e.contactId === c.id && (isAll || e.campaignId === this.selectedCampaignId));
+      const statuses = history.map(h => h.status);
+
+      let estadoEnvio = 'Sin Registro de Envío';
+      for (const s of STATUS_LABELS) {
+        if (statuses.includes(s.key)) { estadoEnvio = s.label; break; }
+      }
+
+      const campaign = this.state.campaigns.find(cmp => cmp.id === c.campaignId);
+      const ultimoEvento = history[0] ? history[0].timestamp : '';
+
+      const row = {};
+      if (isAll) row['Campaña'] = campaign ? campaign.name : c.campaignId;
+      row['Nombre'] = c.name || '';
+      row['Email'] = c.email || '';
+      row['Empresa'] = c.company || '';
+      row['Cargo'] = c.role || '';
+      row['Estado del Envío'] = estadoEnvio;
+      row['Entregado'] = statuses.some(s => ['delivered', 'opened', 'clicked', 'accepted'].includes(s)) ? 'Sí' : 'No';
+      row['Abierto'] = statuses.some(s => ['opened', 'clicked', 'accepted'].includes(s)) ? 'Sí' : 'No';
+      row['Rebotado'] = statuses.includes('bounced') ? 'Sí' : 'No';
+      row['Dado de Baja'] = statuses.includes('unsubscribed') ? 'Sí' : 'No';
+      row['Marcado Spam'] = statuses.includes('spam') ? 'Sí' : 'No';
+      row['Fecha Último Evento'] = ultimoEvento;
+
+      customKeys.forEach(k => {
+        row[k] = (c.customFields && c.customFields[k] !== undefined) ? c.customFields[k] : '';
+      });
+
+      return row;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+
+    // Ancho de columnas aproximado según el contenido, para que no quede
+    // todo apretado al abrirlo en Excel.
+    const headerKeys = Object.keys(rows[0] || {});
+    worksheet['!cols'] = headerKeys.map(key => {
+      const maxLen = Math.max(
+        key.length,
+        ...rows.map(r => String(r[key] ?? '').length)
+      );
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 45) };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const sheetName = isAll ? 'Todas las Campañas' : (this.state.campaigns.find(c => c.id === this.selectedCampaignId)?.name || 'Campaña').slice(0, 31);
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+    const campaignSlug = isAll
+      ? 'todas_las_campanas'
+      : (this.state.campaigns.find(c => c.id === this.selectedCampaignId)?.name || 'campana')
+          .toLowerCase()
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '');
+
+    const filename = `base_datos_${campaignSlug}_${Date.now()}.xlsx`;
+    XLSX.writeFile(workbook, filename);
+
+    this.showToast(`Base de datos exportada correctamente: ${rows.length} contactos en ${filename}`, 'success');
   }
 
   showToast(message, type = 'info') {
