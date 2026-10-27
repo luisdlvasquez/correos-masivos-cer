@@ -103,6 +103,22 @@ class MailPulseApp {
         errorMessage: row.error_message
       }));
 
+      // --- Campañas desde Supabase: registrar las que no existan en el navegador ---
+      try {
+        const known = new Set(this.state.campaigns.map(c => c.id));
+        const found = {};
+        allRows.forEach(r => {
+          if (r.campaign_id && !known.has(r.campaign_id) && !found[r.campaign_id]) {
+            found[r.campaign_id] = { id: r.campaign_id, name: r.campaign_name || r.campaign_id, desc: 'Campaña registrada en Supabase', createdAt: (r.created_at || '').slice(0, 10) };
+          }
+        });
+        Object.values(found).forEach(c => { if (c.createdAt) { const first = allRows.filter(r => r.campaign_id === c.id).reduce((m, r) => r.created_at < m ? r.created_at : m, '9'); c.createdAt = first.slice(0, 10); } });
+        const extra = Object.values(found).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        if (extra.length) {
+          this.state.campaigns = extra.concat(this.state.campaigns);
+          this.populateCampaignSelectors();
+        }
+      } catch (err) { console.error('No se pudieron reconstruir las campañas desde Supabase:', err); }
       this.setLiveStatus(true);
       this.renderDashboard();
       this.renderCampaignsView();
